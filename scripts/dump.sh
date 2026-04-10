@@ -34,22 +34,28 @@ echo ""; echo "[4/5] Extracting partitions..."
 mkdir -p processed
 
 # Process individual partitions first (boot, vbmeta, etc.)
-echo "  Processing individual partitions..."
-for PART in boot init_boot vbmeta vendor_boot dtbo; do
-  FILE=$(find . -maxdepth 1 -name "${PART}.img.lz4" | head -n 1)
-  if [ -n "$FILE" ] && [ -f "$FILE" ]; then
-    echo "    ✓ Found: $(basename "$FILE")"
-    lz4 -d "$FILE" "${FILE%.lz4}" 2>/dev/null || true
-    FILE="${FILE%.lz4}"
-    if xz -9 -T0 "$FILE" 2>/dev/null; then
-      mv "${FILE}.xz" "processed/${PART}.img.xz"
-      echo "      ✓ ${PART}.img.xz"
-    else
-      cp "$FILE" "processed/${PART}.img"
-      echo "      ✓ ${PART}.img"
-    fi
-  fi
-done
+  echo "  Processing individual partitions..."
+  for PART in boot init_boot vbmeta vendor_boot dtbo; do
+    for SUFFIX in "" "_a" "_b"; do
+      FILE=$(find . -maxdepth 1 -name "${PART}${SUFFIX}.img.lz4" | head -n 1)
+      if [ -n "$FILE" ] && [ -s "$FILE" ]; then
+        echo "    ✓ Found: $(basename "$FILE")"
+        lz4 -d "$FILE" "${FILE%.lz4}" 2>/dev/null || true
+        FILE="${FILE%.lz4}"
+        if [ -s "$FILE" ]; then
+          if xz -9 -T0 "$FILE" 2>/dev/null; then
+            mv "${FILE}.xz" "processed/${PART}${SUFFIX}.img.xz"
+            echo "      ✓ ${PART}${SUFFIX}.img.xz"
+          else
+            cp "$FILE" "processed/${PART}${SUFFIX}.img"
+            echo "      ✓ ${PART}${SUFFIX}.img"
+          fi
+        else
+          rm -f "$FILE"
+        fi
+      fi
+    done
+  done
 
 # Extract super.img partitions
 SUPER_FILE=$(find . -maxdepth 1 -name "super.img*" | head -n 1)
@@ -89,14 +95,18 @@ if [ -n "$SUPER_FILE" ] && [ -f "$SUPER_FILE" ]; then
   # Step 4: Move and compress extracted partitions
   echo "    Processing extracted partitions..."
   for PART in system system_ext product vendor vendor_boot vendor_dlkm system_dlkm; do
-    if [ -f "super_dump/${PART}.img" ]; then
-      echo "      ✓ ${PART}.img"
-      if xz -9 -T0 "super_dump/${PART}.img" 2>/dev/null; then
-        mv "super_dump/${PART}.img.xz" "processed/${PART}.img.xz"
-      else
-        mv "super_dump/${PART}.img" "processed/${PART}.img"
+    for SUFFIX in "" "_a" "_b"; do
+      if [ -s "super_dump/${PART}${SUFFIX}.img" ]; then
+        echo "      ✓ ${PART}${SUFFIX}.img"
+        if xz -9 -T0 "super_dump/${PART}${SUFFIX}.img" 2>/dev/null; then
+          mv "super_dump/${PART}${SUFFIX}.img.xz" "processed/${PART}${SUFFIX}.img.xz"
+        else
+          mv "super_dump/${PART}${SUFFIX}.img" "processed/${PART}${SUFFIX}.img"
+        fi
+      elif [ -f "super_dump/${PART}${SUFFIX}.img" ]; then
+        echo "${PART}${SUFFIX}.img is empty, skipping"
       fi
-    fi
+    done
   done
   
   rm -rf super_dump super.img super.raw.img
