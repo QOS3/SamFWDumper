@@ -7,6 +7,7 @@ echo "════════════════════════�
 
 URL="$1"
 COMP_LEVEL="${2:-9}"
+USER_PARTITIONS="${3:-boot init_boot vbmeta dtbo system system_ext product vendor vendor_boot vendor_dlkm system_dlkm}"
 [ -z "$URL" ] && { echo "❌ No URL"; exit 1; }
 
 chmod +x bin/lp/* bin/ext4/* bin/erofs-utils/* bin/py_scripts/* 2>/dev/null || true
@@ -45,7 +46,7 @@ mkdir -p processed
 
 # Process individual partitions first (boot, vbmeta, etc.)
   echo "  Processing individual partitions..."
-  for PART in boot init_boot vbmeta vendor_boot dtbo; do
+  for PART in $USER_PARTITIONS; do
     for SUFFIX in "" "_a" "_b"; do
       FILE=$(find . -maxdepth 1 -name "${PART}${SUFFIX}.img.lz4" | head -n 1)
       if [ -n "$FILE" ] && [ -s "$FILE" ]; then
@@ -118,7 +119,7 @@ if [ -n "$SUPER_FILE" ] && [ -f "$SUPER_FILE" ]; then
   
   # Step 4: Move and compress extracted partitions
   echo "    Processing extracted partitions..."
-  for PART in system system_ext product vendor vendor_boot vendor_dlkm system_dlkm; do
+  for PART in $USER_PARTITIONS; do
     for SUFFIX in "" "_a" "_b"; do
       if [ -s "super_dump/${PART}${SUFFIX}.img" ]; then
         echo "      Processing ${PART}${SUFFIX}.img..."
