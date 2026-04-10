@@ -12,7 +12,7 @@ COMP_LEVEL="${2:-9}"
 chmod +x bin/lp/* bin/ext4/* bin/erofs-utils/* bin/py_scripts/* 2>/dev/null || true
 
 echo ""; echo "[1/5] Downloading..."
-wget --no-check-certificate -q --show-progress -O "firmware.zip" "$URL"
+curl -L -k --progress-bar -o "firmware.zip" "$URL"
 [ ! -f "firmware.zip" ] && { echo "❌ Download failed"; exit 1; }
 FILESIZE=$(stat -c%s "firmware.zip")
 [ "$FILESIZE" -eq 0 ] && { echo "❌ Empty file"; exit 1; }
