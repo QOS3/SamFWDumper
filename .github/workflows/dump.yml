@@ -1,0 +1,29 @@
+name: Firmware Dumper
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'SamFW Direct Download Link'
+        required: true
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Make tools executable
+        run: chmod +x bin/lp/* bin/ext4/* bin/erofs-utils/* bin/py_scripts/*
+
+      - name: Run Dump Script
+        run: bash scripts/dump.sh "${{ github.event.inputs.url }}"
+
+      - name: Upload to GoFile
+        run: |
+          cd processed
+          zip -r ../firmware-dump.zip .
+          cd ..
+          bash upload_gofile.sh firmware-dump.zip
+          
