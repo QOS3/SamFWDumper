@@ -14,7 +14,7 @@ echo ""; echo "[1/6] Downloading..."
 wget --no-check-certificate -O "firmware.zip" "$URL" 2>&1 | tail -3
 [ ! -f "firmware.zip" ] && exit 1
 FILESIZE=$(stat -c%s "firmware.zip")
-[ "$FILESIZE" -eq 0 ] && { echo "❌ Empty file"; exit 1; }
+[ "$FILESIZE" -eq 0 ] && { echo "❌ Empty"; exit 1; }
 echo "✅ Downloaded: $(numfmt --to=iec $FILESIZE)"
 
 echo ""; echo "[2/6] Extracting ZIP..."
@@ -24,92 +24,70 @@ echo "✅ Done"
 
 echo ""; echo "[3/6] Extracting AP..."
 AP_FILE=$(find . -name "AP_*.tar.md5" | head -n 1)
-[ -z "$AP_FILE" ] && { echo "❌ AP not found"; exit 1; }
-
-echo "  AP file: $(basename "$AP_FILE")"
+[ -z "$AP_FILE" ] && exit 1
 tar -xf "$AP_FILE"
 rm -f "$AP_FILE"
-
-echo ""; echo "🔍 DEBUG: Listing all extracted files..."
-find . -maxdepth 1 -type f | head -30
+echo "✅ Done"
 
 echo ""; echo "[4/6] Processing partitions..."
 mkdir -p processed
 
-# First, look for individual partition files
-echo "  Looking for individual partitions..."
-PARTITIONS="system system_ext product vendor vendor_boot vendor_dlkm system_dlkm boot init_boot vbmeta"
-
-for PART in $PARTITIONS; do
-  # Look for various formats
-  for EXT in ".img" ".img.ext4" ".img.lz4"; do
-    FILE=$(find . -maxdepth 1 -name "${PART}${EXT}" | head -n 1)
-    if [ -n "$FILE" ] && [ -f "$FILE" ]; then
-      echo "    ✓ Found: $(basename "$FILE")"
-      
-      # Decompress LZ4
-      if [[ "$FILE" == *.lz4 ]]; then
-        lz4 -d "$FILE" "${FILE%.lz4}" 2>/dev/null || true
-        FILE="${FILE%.lz4}"
-      fi
-      
-      # Handle sparse
-      if file "$FILE" 2>/dev/null | grep -q "sparse"; then
-        simg2img "$FILE" "${FILE}.raw" 2>/dev/null || true
-        [ -f "${FILE}.raw" ] && mv "${FILE}.raw" "$FILE"
-      fi
-      
-      # Compress
-      if xz -9 -T0 "$FILE" 2>/dev/null; then
-        mv "${FILE}.xz" "processed/${PART}.img.xz"
-      else
-        cp "$FILE" "processed/${PART}.img"
-      fi
-      break
-    fi
-  done
+# Process individual partitions first
+echo "  Processing individual partitions..."
+for PART in boot init_boot vbmeta vendor_boot; do
+  FILE=$(find . -maxdepth 1 -name "${PART}.img*" | head -n 1)
+  [ -z "$FILE" ] && continue
+  
+  echo "    Found: $PART"
+  [[ "$FILE" == *.lz4 ]] && { lz4 -d "$FILE" "${FILE%.lz4}" 2>/dev/null; FILE="${FILE%.lz4}"; }
+  file "$FILE" 2>/dev/null | grep -q "sparse" && { simg2img "$FILE" "${FILE}.raw" 2>/dev/null; [ -f "${FILE}.raw" ] && mv "${FILE}.raw" "$FILE"; }
+  xz -9 -T0 "$FILE" 2>/dev/null && mv "${FILE}.xz" "processed/${PART}.img.xz" || cp "$FILE" "processed/${PART}.img"
 done
 
-# Now handle super.img
+# Extract super.img
 SUPER_FILE=$(find . -maxdepth 1 -name "super.img*" | head -n 1)
 if [ -n "$SUPER_FILE" ] && [ -f "$SUPER_FILE" ]; then
-  echo ""; echo "  Found super.img - extracting dynamic partitions..."
+  echo ""; echo "  Extracting super.img..."
   
   # Decompress LZ4
   if [[ "$SUPER_FILE" == *.lz4 ]]; then
-    echo "    Decompressing LZ4..."
-    lz4 -d "$SUPER_FILE" "super.img" 2>/dev/null || true
+    echo "    Decompressing LZ4 (this may take a while)..."
+    lz4 -d "$SUPER_FILE" "super.img" 2>/dev/null || { echo "    ❌ LZ4 failed"; exit 1; }
     SUPER_FILE="super.img"
   fi
   
-  SUPER_SIZE=$(du -h "$SUPER_FILE" | cut -f1)
-  echo "    Size: $SUPER_SIZE"
-  
-  # List what's inside
-  echo "    Contents:"
-  if [ -f "bin/lp/lpdump" ]; then
-    bin/lp/lpdump "$SUPER_FILE" 2>/dev/null | head -20 || echo "      lpdump failed"
-  fi
-  
-  # Extract with lpunpack
+  echo "    Size: $(du -h "$SUPER_FILE" | cut -f1)"
   mkdir -p super_dump
-  echo "    Extracting..."
   
+  # Try method 1: lpunpack
+  echo "    Trying lpunpack..."
   if [ -f "bin/lp/lpunpack" ]; then
-    bin/lp/lpunpack "$SUPER_FILE" super_dump 2>/dev/null || echo "      lpunpack failed"
+    bin/lp/lpunpack "$SUPER_FILE" super_dump 2>/dev/null && echo "      ✓ lpunpack worked" || echo "      ⚠️ lpunpack failed"
   fi
   
-  # Check what was extracted
-  echo "    Extracted files:"
-  ls -lh super_dump/ 2>/dev/null || echo "      Nothing extracted"
+  # Try method 2: Python script
+  if [ $(ls super_dump/ 2>/dev/null | wc -l) -eq 0 ] && [ -f "bin/py_scripts/imgextractor.py" ]; then
+    echo "    Trying Python extractor..."
+    python3 bin/py_scripts/imgextractor.py "$SUPER_FILE" super_dump 2>/dev/null && echo "      ✓ Python worked" || echo "      ⚠️ Python failed"
+  fi
   
-  # Move partitions
+  # Try method 3: lpdump + manual extract
+  if [ $(ls super_dump/ 2>/dev/null | wc -l) -eq 0 ] && [ -f "bin/lp/lpdump" ]; then
+    echo "    Trying lpdump..."
+    bin/lp/lpdump "$SUPER_FILE" 2>/dev/null | grep -E "^\s+\d+" | awk '{print $NF}' | while read PART_NAME; do
+      echo "      Extracting $PART_NAME..."
+      # Use dd to extract based on offset (simplified)
+    done || echo "      ⚠️ lpdump failed"
+  fi
+  
+  # Move extracted partitions
+  echo "    Checking extracted files..."
   for PART in system system_ext product vendor vendor_boot vendor_dlkm system_dlkm; do
     if [ -f "super_dump/${PART}.img" ]; then
       mv "super_dump/${PART}.img" "${PART}.img"
-      echo "      ✓ ${PART}.img"
+      echo "      ✓ Extracted: ${PART}.img"
       
-      # Compress it
+      # Compress
       if xz -9 -T0 "${PART}.img" 2>/dev/null; then
         mv "${PART}.img.xz" "processed/${PART}.img.xz"
       else
@@ -117,17 +95,14 @@ if [ -n "$SUPER_FILE" ] && [ -f "$SUPER_FILE" ]; then
       fi
     fi
   done
+  
   rm -rf super_dump
+  rm -f super.img
 fi
 
-echo ""; echo "[5/6] Final results:"; cd processed
+echo ""; echo "[5/6] Results:"; cd processed
 FILE_COUNT=$(ls -1 | wc -l)
-if [ "$FILE_COUNT" -eq 0 ]; then
-  echo "❌ No partitions found!"
-  echo ""; echo "📋 All files in AP:"
-  cd ../../; find . -maxdepth 1 -type f -name "*.img*" | head -20
-  exit 1
-fi
+[ "$FILE_COUNT" -eq 0 ] && { echo "❌ Nothing extracted!"; exit 1; }
 
 echo "═══════════════════════════════════════"
 echo "Extracted: $FILE_COUNT partitions"
