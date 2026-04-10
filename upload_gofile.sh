@@ -2,34 +2,54 @@
 set -e
 
 FILE="$1"
-[ ! -f "$FILE" ] && { echo "❌ File not found"; exit 1; }
+if [ ! -f "$FILE" ]; then
+  echo "❌ File not found: $FILE"
+  exit 1
+fi
 
 echo "📤 Uploading to GoFile..."
 
-# Get token first
-TOKEN_RESP=$(curl -s -X POST https://api.gofile.io/accounts 2>/dev/null)
-TOKEN=$(echo "$TOKEN_RESP" | grep -oP '"token"\s*:\s*"\K[^"]+' | head -n 1)
+# 1. Get API token
+echo "🔑 Acquiring token..."
+TOKEN_RESPONSE=$(curl -s -X POST https://api.gofile.io/accounts)
+TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.data.token' 2>/dev/null)
 
-if [ -z "$TOKEN" ]; then
-  echo "⚠️ Getting token failed, trying direct upload..."
-  # Direct upload
-  RESP=$(curl -s -F "file=@$FILE" https://api.gofile.io/uploadFile 2>/dev/null)
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+  echo "❌ Failed to get GoFile token"
+  exit 1
+fi
+
+# 2. Get optimal server
+echo "🌍 Selecting server..."
+SERVER=$(curl -s "https://api.gofile.io/servers?token=$TOKEN" | jq -r '.data.servers[0].name' 2>/dev/null)
+[ -z "$SERVER" ] && SERVER="store1"
+
+# 3. Upload
+echo "⬆️ Uploading $(du -h "$FILE" | cut -f1)..."
+RESPONSE=$(curl -s -X POST \
+  -F "file=@$FILE" \
+  -F "token=$TOKEN" \
+  "https://${SERVER}.gofile.io/uploadFile")
+
+# 4. Parse & output
+if echo "$RESPONSE" | grep -q '"status":"ok"'; then
+  DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.data.downloadPage')
+  
+  echo "✅ Upload successful!"
+  echo "🔗 $DOWNLOAD_URL"
+  echo "$DOWNLOAD_URL" > download_url.txt
+  
+  cat > release_notes.txt <<EOF
+## Firmware Dump
+**Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+**Link:** $DOWNLOAD_URL
+**File:** $(basename "$FILE") ($(du -h "$FILE" | cut -f1))
+**MD5:** $(md5sum "$FILE" | cut -d' ' -f1)
+EOF
+  cat release_notes.txt
+  exit 0
 else
-  echo "✓ Got token"
-  RESP=$(curl -s -F "file=@$FILE" -F "token=$TOKEN" https://api.gofile.io/uploadFile 2>/dev/null)
+  echo "❌ Upload failed"
+  echo "Response: $RESPONSE"
+  exit 1
 fi
-
-echo "Response: $RESP"
-
-if echo "$RESP" | grep -q '"status":"ok"'; then
-  URL=$(echo "$RESP" | grep -oP '"downloadPage"\s*:\s*"\K[^"]+')
-  if [ -n "$URL" ]; then
-    echo "✅ Success!"
-    echo "🔗 $URL"
-    echo "$URL" > download_url.txt
-    exit 0
-  fi
-fi
-
-echo "❌ Upload failed"
-exit 1
