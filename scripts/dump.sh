@@ -37,7 +37,7 @@ mkdir -p processed
 SUPER_FILE=$(find . -maxdepth 1 -name "super.img*" | head -n 1)
 
 if [ -n "$SUPER_FILE" ] && [ -f "$SUPER_FILE" ]; then
-  echo "  Found: $(basename "$SUPER_FILE")"
+  echo "  🔍 Found: $(basename "$SUPER_FILE")"
   
   # Decompress LZ4
   if [[ "$SUPER_FILE" == *.lz4 ]]; then
@@ -46,38 +46,128 @@ if [ -n "$SUPER_FILE" ] && [ -f "$SUPER_FILE" ]; then
     SUPER_FILE="super.img"
   fi
   
-  echo "    Size: $(du -h "$SUPER_FILE" | cut -f1)"
-  mkdir -p super_dump
+  SUPER_SIZE=$(du -h "$SUPER_FILE" | cut -f1)
+  echo "    Size: $SUPER_SIZE"
   
-  # Extract with lpunpack
-  echo "    Extracting dynamic partitions..."
-  if [ -f "bin/lp/lpunpack" ]; then
-    bin/lp/lpunpack "$SUPER_FILE" super_dump 2>/dev/null || echo "      ⚠️ lpunpack failed"
+  # DEBUG: Check file type
+  echo "    File type:"
+  file "$SUPER_FILE"
+  
+  # DEBUG: Check if it's sparse
+  if file "$SUPER_FILE" 2>/dev/null | grep -q "sparse"; then
+    echo "    ⚠️ Sparse image detected - converting..."
+    simg2img "$SUPER_FILE" "super.img.raw" 2>/dev/null || true
+    [ -f "super.img.raw" ] && mv "super.img.raw" "$SUPER_FILE"
   fi
   
-  # Move extracted partitions (handle A/B slots)
-  for PART in system system_ext product vendor vendor_boot vendor_dlkm system_dlkm; do
-    SRC=""
-    if [ -f "super_dump/${PART}_a.img" ]; then
-      SRC="super_dump/${PART}_a.img"
-    elif [ -f "super_dump/${PART}.img" ]; then
-      SRC="super_dump/${PART}.img"
-    elif [ -f "super_dump/${PART}_b.img" ]; then
-      SRC="super_dump/${PART}_b.img"
+  # DEBUG: List what lpunpack sees
+  echo "    🔎 Checking super.img contents..."
+  
+  # Try lpdump first to see what's inside
+  if [ -f "bin/lp/lpdump" ]; then
+    echo "    Running lpdump..."
+    bin/lp/lpdump "$SUPER_FILE" 2>&1 | head -30 || echo "      lpdump failed"
+  fi
+  
+  # Try to list partitions with lpunpack --list
+  echo "    Attempting to list partitions..."
+  if [ -f "bin/lp/lpunpack" ]; then
+    bin/lp/lpunpack --list "$SUPER_FILE" 2>&1 | head -20 || echo "      lpunpack --list failed"
+  fi
+  
+  # Try Python extractor to list
+  if [ -f "bin/py_scripts/imgextractor.py" ]; then
+    echo "    Trying Python extractor to list..."
+    python3 bin/py_scripts/imgextractor.py --list "$SUPER_FILE" 2>&1 | head -20 || echo "      Python list failed"
+  fi
+  
+  # Now try actual extraction
+  echo "    Extracting dynamic partitions..."
+  mkdir -p super_dump
+  
+  EXTRACTION_SUCCESS=false
+  
+  # Method 1: lpunpack
+  if [ -f "bin/lp/lpunpack" ]; then
+    echo "      Trying lpunpack..."
+    if bin/lp/lpunpack "$SUPER_FILE" super_dump 2>/dev/null; then
+      echo "        ✓ lpunpack succeeded"
+      EXTRACTION_SUCCESS=true
+    else
+      echo "        ⚠️ lpunpack failed"
     fi
+  fi
+  
+  # Method 2: Python extractor
+  if [ "$EXTRACTION_SUCCESS" = false ] && [ -f "bin/py_scripts/imgextractor.py" ]; then
+    echo "      Trying Python extractor..."
+    if python3 bin/py_scripts/imgextractor.py "$SUPER_FILE" super_dump 2>/dev/null; then
+      echo "        ✓ Python extractor succeeded"
+      EXTRACTION_SUCCESS=true
+    else
+      echo "        ⚠️ Python extractor failed"
+    fi
+  fi
+  
+  # Method 3: Try extracting partition by partition
+  if [ "$EXTRACTION_SUCCESS" = false ]; then
+    echo "      Trying partition-by-partition extraction..."
+    PARTITIONS="system system_ext product vendor vendor_boot vendor_dlkm system_dlkm"
     
-    if [ -n "$SRC" ]; then
-      echo "      ✓ ${PART}.img"
-      cp "$SRC" "${PART}.img"
+    for PART in $PARTITIONS; do
+      echo "        Trying to extract: $PART..."
       
-      # Compress
-      if xz -9 -T0 "${PART}.img" 2>/dev/null; then
-        mv "${PART}.img.xz" "processed/${PART}.img.xz"
-      else
-        mv "${PART}.img" "processed/${PART}.img"
+      # Try with lpunpack --partition
+      if [ -f "bin/lp/lpunpack" ]; then
+        if bin/lp/lpunpack --partition="$PART" "$SUPER_FILE" super_dump 2>/dev/null; then
+          echo "          ✓ Extracted: $PART"
+        fi
       fi
-    fi
-  done
+      
+      # Try _a slot
+      if [ -f "bin/lp/lpunpack" ]; then
+        if bin/lp/lpunpack --partition="${PART}_a" "$SUPER_FILE" super_dump 2>/dev/null; then
+          echo "          ✓ Extracted: ${PART}_a"
+        fi
+      fi
+    done
+  fi
+  
+  # Check what was extracted
+  echo "    Checking extracted files..."
+  if [ -d "super_dump" ]; then
+    EXTRACTED_COUNT=$(ls -1 super_dump/ 2>/dev/null | wc -l)
+    echo "      Files in super_dump: $EXTRACTED_COUNT"
+    ls -lh super_dump/ 2>/dev/null | head -20 || echo "      (empty directory)"
+    
+    # Move extracted partitions (handle A/B slots)
+    for PART in system system_ext product vendor vendor_boot vendor_dlkm system_dlkm; do
+      SRC=""
+      if [ -f "super_dump/${PART}_a.img" ]; then
+        SRC="super_dump/${PART}_a.img"
+        echo "      ✓ Found: ${PART}_a.img → ${PART}.img"
+      elif [ -f "super_dump/${PART}.img" ]; then
+        SRC="super_dump/${PART}.img"
+        echo "      ✓ Found: ${PART}.img"
+      elif [ -f "super_dump/${PART}_b.img" ]; then
+        SRC="super_dump/${PART}_b.img"
+        echo "      ✓ Found: ${PART}_b.img → ${PART}.img"
+      fi
+      
+      if [ -n "$SRC" ]; then
+        cp "$SRC" "${PART}.img"
+        
+        # Compress
+        if xz -9 -T0 "${PART}.img" 2>/dev/null; then
+          mv "${PART}.img.xz" "processed/${PART}.img.xz"
+        else
+          mv "${PART}.img" "processed/${PART}.img"
+        fi
+      fi
+    done
+  else
+    echo "      ⚠️ super_dump directory not created"
+  fi
   
   rm -rf super_dump
   rm -f super.img
