@@ -6,6 +6,10 @@ on:
       url:
         description: 'SamFW Direct Download Link'
         required: true
+      compression_level:
+        description: 'XZ Compression Level (0-9)'
+        required: false
+        default: '9'
 
 jobs:
   dump:
@@ -23,13 +27,14 @@ jobs:
             lz4 \
             unzip \
             curl \
+            pv \
             android-sdk-libsparse-utils
 
       - name: Make tools executable
         run: chmod +x bin/lp/* bin/ext4/* bin/erofs-utils/* bin/py_scripts/* upload_gofile.sh scripts/dump.sh
 
       - name: Run Dump Script
-        run: bash scripts/dump.sh "${{ github.event.inputs.url }}"
+        run: bash scripts/dump.sh "${{ github.event.inputs.url }}" "${{ github.event.inputs.compression_level }}"
 
       - name: Upload to GoFile
         run: |

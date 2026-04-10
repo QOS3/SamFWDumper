@@ -6,6 +6,7 @@ echo "   Samsung Firmware Extractor"
 echo "═══════════════════════════════════════"
 
 URL="$1"
+COMP_LEVEL="${2:-9}"
 [ -z "$URL" ] && { echo "❌ No URL"; exit 1; }
 
 chmod +x bin/lp/* bin/ext4/* bin/erofs-utils/* bin/py_scripts/* 2>/dev/null || true
@@ -39,16 +40,30 @@ mkdir -p processed
     for SUFFIX in "" "_a" "_b"; do
       FILE=$(find . -maxdepth 1 -name "${PART}${SUFFIX}.img.lz4" | head -n 1)
       if [ -n "$FILE" ] && [ -s "$FILE" ]; then
-        echo "    ✓ Found: $(basename "$FILE")"
-        lz4 -d "$FILE" "${FILE%.lz4}" 2>/dev/null || true
+        echo "    Processing: $(basename "$FILE")"
+        if command -v pv &>/dev/null; then
+          pv "$FILE" | lz4 -d > "${FILE%.lz4}" 2>/dev/null || true
+        else
+          lz4 -d "$FILE" "${FILE%.lz4}" 2>/dev/null || true
+        fi
         FILE="${FILE%.lz4}"
         if [ -s "$FILE" ]; then
-          if xz -9 -T0 "$FILE" 2>/dev/null; then
-            mv "${FILE}.xz" "processed/${PART}${SUFFIX}.img.xz"
-            echo "      ✓ ${PART}${SUFFIX}.img.xz"
+          if command -v pv &>/dev/null; then
+            if pv "$FILE" | xz -${COMP_LEVEL} -T0 > "processed/${PART}${SUFFIX}.img.xz" 2>/dev/null; then
+              echo "        ✓ Compressed to .xz"
+            else
+              rm -f "processed/${PART}${SUFFIX}.img.xz"
+              pv "$FILE" > "processed/${PART}${SUFFIX}.img"
+              echo "        ✓ Moved to processed"
+            fi
           else
-            cp "$FILE" "processed/${PART}${SUFFIX}.img"
-            echo "      ✓ ${PART}${SUFFIX}.img"
+            if xz -${COMP_LEVEL} -T0 "$FILE" 2>/dev/null; then
+              mv "${FILE}.xz" "processed/${PART}${SUFFIX}.img.xz"
+              echo "        ✓ Compressed to .xz"
+            else
+              cp "$FILE" "processed/${PART}${SUFFIX}.img"
+              echo "        ✓ Moved to processed"
+            fi
           fi
         else
           rm -f "$FILE"
@@ -97,11 +112,23 @@ if [ -n "$SUPER_FILE" ] && [ -f "$SUPER_FILE" ]; then
   for PART in system system_ext product vendor vendor_boot vendor_dlkm system_dlkm; do
     for SUFFIX in "" "_a" "_b"; do
       if [ -s "super_dump/${PART}${SUFFIX}.img" ]; then
-        echo "      ✓ ${PART}${SUFFIX}.img"
-        if xz -9 -T0 "super_dump/${PART}${SUFFIX}.img" 2>/dev/null; then
-          mv "super_dump/${PART}${SUFFIX}.img.xz" "processed/${PART}${SUFFIX}.img.xz"
+        echo "      Processing ${PART}${SUFFIX}.img..."
+        if command -v pv &>/dev/null; then
+          if pv "super_dump/${PART}${SUFFIX}.img" | xz -9 -T0 > "processed/${PART}${SUFFIX}.img.xz" 2>/dev/null; then
+            echo "        ✓ Compressed to .xz"
+          else
+            rm -f "processed/${PART}${SUFFIX}.img.xz"
+            pv "super_dump/${PART}${SUFFIX}.img" > "processed/${PART}${SUFFIX}.img"
+            echo "        ✓ Moved to processed"
+          fi
         else
-          mv "super_dump/${PART}${SUFFIX}.img" "processed/${PART}${SUFFIX}.img"
+          if xz -9 -T0 "super_dump/${PART}${SUFFIX}.img" 2>/dev/null; then
+            mv "super_dump/${PART}${SUFFIX}.img.xz" "processed/${PART}${SUFFIX}.img.xz"
+            echo "        ✓ Compressed to .xz"
+          else
+            mv "super_dump/${PART}${SUFFIX}.img" "processed/${PART}${SUFFIX}.img"
+            echo "        ✓ Moved to processed"
+          fi
         fi
       elif [ -f "super_dump/${PART}${SUFFIX}.img" ]; then
         echo "${PART}${SUFFIX}.img is empty, skipping"
