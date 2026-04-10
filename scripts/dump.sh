@@ -13,18 +13,40 @@ export PATH="$GITHUB_WORKSPACE/bin/lp:$GITHUB_WORKSPACE/bin/ext4:$GITHUB_WORKSPA
 chmod +x bin/lp/* bin/ext4/* bin/erofs-utils/* bin/py_scripts/* 2>/dev/null || true
 
 echo ""; echo "[1/6] Downloading..."
-wget --no-check-certificate -O "firmware.zip" "$URL" 2>&1 | tail -3
-[ ! -f "firmware.zip" ] && { echo "❌ Download failed"; exit 1; }
-echo "✅ Downloaded: $(du -h firmware.zip | cut -f1)"
+wget --no-check-certificate -O "firmware.zip" "$URL" 2>&1 | tail -5
+
+# Check if file exists AND has size > 0
+if [ ! -f "firmware.zip" ]; then
+  echo "❌ Download failed - file not found"
+  exit 1
+fi
+
+FILESIZE=$(stat -c%s "firmware.zip")
+if [ "$FILESIZE" -eq 0 ]; then
+  echo "❌ Download failed - file is empty (0 bytes)"
+  echo "⚠️ The SamFW link is expired or invalid"
+  rm -f firmware.zip
+  exit 1
+fi
+
+echo "✅ Downloaded: $(numfmt --to=iec $FILESIZE)"
 
 echo ""; echo "[2/6] Extracting ZIP..."
-unzip -o "firmware.zip" >/dev/null 2>&1
+if ! unzip -o "firmware.zip" >/dev/null 2>&1; then
+  echo "❌ ZIP extraction failed"
+  exit 1
+fi
 rm -f "firmware.zip"
 echo "✅ Done"
 
 echo ""; echo "[3/6] Extracting AP..."
 AP_FILE=$(find . -name "AP_*.tar.md5" | head -n 1)
-[ -z "$AP_FILE" ] && { echo "❌ AP not found"; exit 1; }
+if [ -z "$AP_FILE" ]; then
+  echo "❌ AP file not found"
+  echo "Files found:"
+  ls -la
+  exit 1
+fi
 tar -xf "$AP_FILE" >/dev/null 2>&1
 rm -f "$AP_FILE"
 echo "✅ Done"
@@ -38,7 +60,10 @@ if [ -n "$SUPER_FILE" ] && [ -f "$SUPER_FILE" ]; then
   # Handle LZ4
   if [[ "$SUPER_FILE" == *.lz4 ]]; then
     echo "  Decompressing LZ4..."
-    bin/erofs-utils/extract.erofs "$SUPER_FILE" "super.img" 2>/dev/null || lz4 -d "$SUPER_FILE" "super.img" 2>/dev/null || true
+    if [ -f "bin/erofs-utils/extract.erofs" ]; then
+      bin/erofs-utils/extract.erofs "$SUPER_FILE" "super.img" 2>/dev/null || true
+    fi
+    lz4 -d "$SUPER_FILE" "super.img" 2>/dev/null || true
     SUPER_FILE="super.img"
   fi
   
@@ -76,7 +101,11 @@ for PART in $PARTITIONS; do
   # Handle sparse
   if file "$FILE" 2>/dev/null | grep -q "sparse"; then
     echo "    Converting sparse..."
-    [ -f "bin/ext4/simg2img" ] && bin/ext4/simg2img "$FILE" "${FILE}.raw" 2>/dev/null || simg2img "$FILE" "${FILE}.raw" 2>/dev/null || true
+    if [ -f "bin/ext4/simg2img" ]; then
+      bin/ext4/simg2img "$FILE" "${FILE}.raw" 2>/dev/null || true
+    else
+      simg2img "$FILE" "${FILE}.raw" 2>/dev/null || true
+    fi
     [ -f "${FILE}.raw" ] && mv "${FILE}.raw" "$FILE"
   fi
   
@@ -91,7 +120,12 @@ for PART in $PARTITIONS; do
 done
 
 echo ""; echo "[6/6] Results:"; cd processed
+FILE_COUNT=$(ls -1 | wc -l)
+if [ "$FILE_COUNT" -eq 0 ]; then
+  echo "❌ No partitions extracted!"
+  exit 1
+fi
 echo "═══════════════════════════════════════"
-echo "Files: $(ls -1 | wc -l)"; ls -lh
+echo "Files: $FILE_COUNT"; ls -lh
 echo "═══════════════════════════════════════"
 echo "✅ Done!"
