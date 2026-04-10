@@ -12,14 +12,19 @@ COMP_LEVEL="${2:-9}"
 chmod +x bin/lp/* bin/ext4/* bin/erofs-utils/* bin/py_scripts/* 2>/dev/null || true
 
 echo ""; echo "[1/5] Downloading..."
-wget --no-check-certificate -O "firmware.zip" "$URL" 2>&1 | tail -3
+wget --no-check-certificate -q --show-progress -O "firmware.zip" "$URL"
 [ ! -f "firmware.zip" ] && { echo "❌ Download failed"; exit 1; }
 FILESIZE=$(stat -c%s "firmware.zip")
 [ "$FILESIZE" -eq 0 ] && { echo "❌ Empty file"; exit 1; }
 echo "✅ Downloaded: $(numfmt --to=iec $FILESIZE)"
 
 echo ""; echo "[2/5] Extracting ZIP..."
-unzip -o "firmware.zip" >/dev/null 2>&1
+if command -v pv &>/dev/null; then
+  TOTAL_FILES=$(unzip -Z -1 "firmware.zip" 2>/dev/null | wc -l)
+  unzip -o "firmware.zip" | pv -l -s "$TOTAL_FILES" >/dev/null 2>&1 || true
+else
+  unzip -o "firmware.zip" >/dev/null 2>&1
+fi
 rm -f "firmware.zip"
 echo "✅ Done"
 
@@ -27,7 +32,11 @@ echo ""; echo "[3/5] Extracting AP..."
 AP_FILE=$(find . -name "AP_*.tar.md5" -o -name "AP_*.tar" | head -n 1)
 [ -z "$AP_FILE" ] && { echo "❌ AP file not found"; exit 1; }
 echo "  Extracting: $(basename "$AP_FILE")"
-tar -xf "$AP_FILE" >/dev/null 2>&1
+if command -v pv &>/dev/null; then
+  pv "$AP_FILE" | tar -xf - 2>/dev/null || true
+else
+  tar -xf "$AP_FILE" >/dev/null 2>&1
+fi
 rm -f "$AP_FILE"
 echo "✅ Done"
 
