@@ -14,16 +14,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq xz-utils lz4 unzip curl
+
       - name: Make tools executable
-        run: chmod +x bin/lp/* bin/ext4/* bin/erofs-utils/* bin/py_scripts/*
+        run: chmod +x bin/lp/* bin/ext4/* bin/erofs-utils/* bin/py_scripts/* upload_gofile.sh scripts/dump.sh
 
       - name: Run Dump Script
         run: bash scripts/dump.sh "${{ github.event.inputs.url }}"
 
       - name: Upload to GoFile
         run: |
-          cd processed
-          zip -r ../firmware-dump.zip .
-          cd ..
-          bash upload_gofile.sh firmware-dump.zip
+          if [ -d "processed" ] && [ "$(ls -A processed)" ]; then
+            cd processed
+            zip -r ../firmware-dump.zip .
+            cd ..
+            bash upload_gofile.sh firmware-dump.zip
+          else
+            echo "❌ No files to upload"
+            exit 1
+          fi
           
