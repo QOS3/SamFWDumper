@@ -21,7 +21,7 @@ echo "✅ Downloaded: $(numfmt --to=iec $FILESIZE)"
 echo ""; echo "[2/5] Extracting ZIP..."
 if command -v pv &>/dev/null; then
   TOTAL_FILES=$(unzip -Z -1 "firmware.zip" 2>/dev/null | wc -l)
-  unzip -o "firmware.zip" | pv -l -s "$TOTAL_FILES" >/dev/null 2>&1 || true
+  unzip -o "firmware.zip" | pv -f -l -s "$TOTAL_FILES" >/dev/null 2>&1 || true
 else
   unzip -o "firmware.zip" >/dev/null 2>&1
 fi
@@ -33,7 +33,7 @@ AP_FILE=$(find . -name "AP_*.tar.md5" -o -name "AP_*.tar" | head -n 1)
 [ -z "$AP_FILE" ] && { echo "❌ AP file not found"; exit 1; }
 echo "  Extracting: $(basename "$AP_FILE")"
 if command -v pv &>/dev/null; then
-  pv "$AP_FILE" | tar -xf - 2>/dev/null || true
+  pv -f "$AP_FILE" | tar -xf - 2>/dev/null || true
 else
   tar -xf "$AP_FILE" >/dev/null 2>&1
 fi
@@ -51,18 +51,18 @@ mkdir -p processed
       if [ -n "$FILE" ] && [ -s "$FILE" ]; then
         echo "    Processing: $(basename "$FILE")"
         if command -v pv &>/dev/null; then
-          pv "$FILE" | lz4 -d > "${FILE%.lz4}" 2>/dev/null || true
+          pv -f "$FILE" | lz4 -d > "${FILE%.lz4}" 2>/dev/null || true
         else
           lz4 -d "$FILE" "${FILE%.lz4}" 2>/dev/null || true
         fi
         FILE="${FILE%.lz4}"
         if [ -s "$FILE" ]; then
           if command -v pv &>/dev/null; then
-            if pv "$FILE" | xz -${COMP_LEVEL} -T0 > "processed/${PART}${SUFFIX}.img.xz" 2>/dev/null; then
+            if pv -f "$FILE" | xz -${COMP_LEVEL} -T0 > "processed/${PART}${SUFFIX}.img.xz" 2>/dev/null; then
               echo "        ✓ Compressed to .xz"
             else
               rm -f "processed/${PART}${SUFFIX}.img.xz"
-              pv "$FILE" > "processed/${PART}${SUFFIX}.img"
+              pv -f "$FILE" > "processed/${PART}${SUFFIX}.img"
               echo "        ✓ Moved to processed"
             fi
           else
@@ -123,11 +123,11 @@ if [ -n "$SUPER_FILE" ] && [ -f "$SUPER_FILE" ]; then
       if [ -s "super_dump/${PART}${SUFFIX}.img" ]; then
         echo "      Processing ${PART}${SUFFIX}.img..."
         if command -v pv &>/dev/null; then
-          if pv "super_dump/${PART}${SUFFIX}.img" | xz -9 -T0 > "processed/${PART}${SUFFIX}.img.xz" 2>/dev/null; then
+          if pv -f "super_dump/${PART}${SUFFIX}.img" | xz -9 -T0 > "processed/${PART}${SUFFIX}.img.xz" 2>/dev/null; then
             echo "        ✓ Compressed to .xz"
           else
             rm -f "processed/${PART}${SUFFIX}.img.xz"
-            pv "super_dump/${PART}${SUFFIX}.img" > "processed/${PART}${SUFFIX}.img"
+            pv -f "super_dump/${PART}${SUFFIX}.img" > "processed/${PART}${SUFFIX}.img"
             echo "        ✓ Moved to processed"
           fi
         else
